@@ -32,6 +32,36 @@ yarn-error.log*
 *.temp
 *.bak
 *.cache
+*~
+
+# Резервные копии базы данных
+*.sql.backup
+*.dump
+backup/
+backups/
+
+# Конфигурационные файлы с паролями
+.env
+.env.local
+.env.*.local
+*.env
+config.local.*
+secrets.yml
+
+# Документы и данные
+uploads/
+documents/
+*.pdf
+*.doc
+*.docx
+
+# Компиляция и сборка
+dist/
+build/
+*.o
+*.so
+*.dll
+*.exe
 
 # Зависимости
 node_modules/
@@ -39,17 +69,9 @@ vendor/
 .pnp
 .pnp.js
 
-# Переменные окружения
-.env
-.env.local
-.env.*.local
-*.env
+# Тестовые данные (если не нужны в репозитории)
+# test_data/
 
-# Базы данных
-*.sql
-*.sqlite
-*.db
-
-# Резервные копии
-*.backup
-backup/
+# Старые версии файлов
+*.old
+*.orig
