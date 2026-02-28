@@ -1,0 +1,55 @@
+# Операционные системы
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Редакторы и IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+*.sublime-project
+*.sublime-workspace
+
+# Логи
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Временные файлы
+*.tmp
+*.temp
+*.bak
+*.cache
+
+# Зависимости
+node_modules/
+vendor/
+.pnp
+.pnp.js
+
+# Переменные окружения
+.env
+.env.local
+.env.*.local
+*.env
+
+# Базы данных
+*.sql
+*.sqlite
+*.db
+
+# Резервные копии
+*.backup
+backup/
