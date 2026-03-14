@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header"><h1>Конвертер валют</h1></div>
+
+<div class="card converter-card">
+  <div class="converter-row">
+    <div class="converter-field">
+      <label>Сумма</label>
+      <input type="number" id="amount" value="1000" min="0.01" step="any" class="input-lg"/>
+    </div>
+    <div class="converter-field">
+      <label>Из</label>
+      <select id="from-curr" class="input-lg"></select>
+    </div>
+    <div class="converter-swap" onclick="swapCurrencies()">⇄</div>
+    <div class="converter-field">
+      <label>В</label>
+      <select id="to-curr" class="input-lg"></select>
+    </div>
+    <button class="btn btn-primary btn-lg" onclick="convert()">Конвертировать</button>
+  </div>
+  <div id="convert-result" class="convert-result"></div>
+</div>
+
+<div class="card mt">
+  <h2>Кросс-курсы для <span id="cross-base">USD</span></h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Валюта</th><th>Курс</th><th>1000 <span id="cross-base2">USD</span> =</th></tr></thead>
+      <tbody id="cross-body"><tr><td colspan="3" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadCurrencies() {
+  const data = await api('/api/currencies');
+  const opts = data.map(c => `<option value="${c.code}">${c.code} — ${c.name}</option>`).join('');
+  document.getElementById('from-curr').innerHTML = opts;
+  document.getElementById('to-curr').innerHTML = opts;
+  // Дефолты
+  document.getElementById('from-curr').value = 'USD';
+  document.getElementById('to-curr').value = 'RUB';
+  loadCrossRates();
+}
+
+async function convert() {
+  const amount = document.getElementById('amount').value;
+  const from = document.getElementById('from-curr').value;
+  const to = document.getElementById('to-curr').value;
+  const d = await api(`/api/convert?amount=${amount}&from_curr=${from}&to_curr=${to}`);
+  const el = document.getElementById('convert-result');
+  if (d.result !== null) {
+    el.innerHTML = `<span class="result-amount">${parseFloat(amount).toLocaleString('ru')}</span>
+      <span class="result-from">${from}</span> =
+      <span class="result-value">${parseFloat(d.result).toLocaleString('ru', {maximumFractionDigits:4})}</span>
+      <span class="result-to">${to}</span>`;
+  } else {
+    el.innerHTML = `<span class="error">Курс не найден</span>`;
+  }
+  loadCrossRates();
+}
+
+async function loadCrossRates() {
+  const base = document.getElementById('from-curr').value;
+  document.getElementById('cross-base').textContent = base;
+  document.getElementById('cross-base2').textContent = base;
+  const latest = await api('/api/rates/latest');
+  const rows = latest.filter(r => r.base_currency === base || r.target_currency === base).slice(0, 20);
+  document.getElementById('cross-body').innerHTML = rows.map(r => {
+    const isSrc = r.base_currency === base;
+    const target = isSrc ? r.target_currency : r.base_currency;
+    const rate = isSrc ? r.rate : 1 / r.rate;
+    return `<tr>
+      <td><b>${target}</b></td>
+      <td>${parseFloat(rate).toFixed(6)}</td>
+      <td>${(1000 * rate).toFixed(2)}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="3">Нет данных</td></tr>';
+}
+
+function swapCurrencies() {
+  const f = document.getElementById('from-curr');
+  const t = document.getElementById('to-curr');
+  [f.value, t.value] = [t.value, f.value];
+  convert();
+}
+
+document.getElementById('from-curr').addEventListener('change', loadCrossRates);
+loadCurrencies();
+</script>
+{% endblock %}

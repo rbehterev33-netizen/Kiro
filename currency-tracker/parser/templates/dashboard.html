@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Дашборд</h1>
+  <button class="btn btn-primary" onclick="refreshAll()">↻ Обновить</button>
+</div>
+
+<!-- Карточки статистики -->
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card"><div class="stat-label">Валют в БД</div><div class="stat-value" id="stat-currencies">—</div></div>
+  <div class="stat-card"><div class="stat-label">Записей курсов</div><div class="stat-value" id="stat-rates">—</div></div>
+  <div class="stat-card"><div class="stat-label">Источников</div><div class="stat-value" id="stat-sources">—</div></div>
+  <div class="stat-card"><div class="stat-label">Последнее обновление</div><div class="stat-value" id="stat-update">—</div></div>
+</div>
+
+<!-- Топ волатильных пар + график -->
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <h2>Топ волатильных пар</h2>
+      <select id="vol-days" onchange="loadVolatility()">
+        <option value="7">7 дней</option>
+        <option value="14">14 дней</option>
+        <option value="30">30 дней</option>
+      </select>
+    </div>
+    <div id="volatility-list" class="pair-list">Загрузка...</div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>График курса</h2>
+      <select id="chart-pair" onchange="loadChart()">
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+        <option value="CNY-RUB">CNY/RUB</option>
+        <option value="USD-EUR">USD/EUR</option>
+      </select>
+    </div>
+    <canvas id="rateChart" height="200"></canvas>
+  </div>
+</div>
+
+<!-- Последние курсы -->
+<div class="card mt">
+  <div class="card-header">
+    <h2>Актуальные курсы</h2>
+    <input type="text" id="rates-filter" placeholder="Фильтр..." oninput="filterRates()" class="input-sm"/>
+  </div>
+  <div class="table-wrap">
+    <table id="rates-table">
+      <thead><tr><th>Пара</th><th>Курс</th><th>Дата</th><th>Источник</th></tr></thead>
+      <tbody id="rates-body">
+        <tr><td colspan="4" class="loading">Загрузка...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allRates = [];
+let rateChart = null;
+
+async function loadStatus() {
+  const d = await api('/api/status');
+  document.getElementById('stat-currencies').textContent = d.currencies;
+  document.getElementById('stat-rates').textContent = d.exchange_rates;
+  document.getElementById('stat-sources').textContent = d.data_sources;
+  document.getElementById('stat-update').textContent = d.last_update || '—';
+  document.getElementById('db-status').className = 'status-dot online';
+  document.getElementById('db-info').textContent = 'БД подключена';
+}
+
+async function loadVolatility() {
+  const days = document.getElementById('vol-days').value;
+  const data = await api(`/api/volatility?days=${days}`);
+  const el = document.getElementById('volatility-list');
+  el.innerHTML = data.map((item, i) => `
+    <div class="pair-row" onclick="selectPair('${item.currency_pair.replace('/','-')}')">
+      <span class="pair-rank">${i+1}</span>
+      <span class="pair-name">${item.currency_pair}</span>
+      <span class="pair-vol">σ ${item.volatility.toFixed(4)}</span>
+      <span class="pair-avg">${item.avg_rate.toFixed(4)}</span>
+    </div>`).join('');
+}
+
+async function loadChart() {
+  const pair = document.getElementById('chart-pair').value;
+  const data = await api(`/api/rates/${pair}?days=30`);
+  const labels = data.map(d => d.date);
+  const values = data.map(d => d.rate);
+
+  if (rateChart) rateChart.destroy();
+  rateChart = new Chart(document.getElementById('rateChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: pair.replace('-','/'),
+        data: values,
+        borderColor: '#4f8ef7',
+        backgroundColor: 'rgba(79,142,247,0.08)',
+        borderWidth: 2,
+        pointRadius: 2,
+        tension: 0.3,
+        fill: true
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: { x: { ticks: { maxTicksLimit: 8 } } }
+    }
+  });
+}
+
+async function loadRates() {
+  allRates = await api('/api/rates/latest');
+  renderRates(allRates);
+}
+
+function renderRates(data) {
+  document.getElementById('rates-body').innerHTML = data.map(r => `
+    <tr>
+      <td><b>${r.currency_pair}</b></td>
+      <td>${parseFloat(r.rate).toFixed(4)}</td>
+      <td>${r.rate_date}</td>
+      <td><span class="badge">${r.source_name}</span></td>
+    </tr>`).join('');
+}
+
+function filterRates() {
+  const q = document.getElementById('rates-filter').value.toLowerCase();
+  renderRates(allRates.filter(r => r.currency_pair.toLowerCase().includes(q) || r.source_name.toLowerCase().includes(q)));
+}
+
+function selectPair(pair) {
+  document.getElementById('chart-pair').value = pair;
+  loadChart();
+}
+
+function refreshAll() {
+  loadStatus(); loadVolatility(); loadChart(); loadRates();
+}
+
+refreshAll();
+setInterval(refreshAll, 60000); // авто-обновление каждую минуту
+</script>
+{% endblock %}

@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Курсы валют</h1>
+</div>
+
+<div class="card">
+  <div class="card-header">
+    <div class="flex-row gap">
+      <select id="base-filter" onchange="loadHistory()">
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+        <option value="CNY-RUB">CNY/RUB</option>
+        <option value="USD-EUR">USD/EUR</option>
+        <option value="EUR-USD">EUR/USD</option>
+      </select>
+      <select id="days-filter" onchange="loadHistory()">
+        <option value="7">7 дней</option>
+        <option value="14">14 дней</option>
+        <option value="30" selected>30 дней</option>
+        <option value="90">90 дней</option>
+      </select>
+    </div>
+  </div>
+  <canvas id="historyChart" height="120"></canvas>
+</div>
+
+<div class="card mt">
+  <h2>Таблица истории</h2>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>Дата</th><th>Курс</th><th>Изменение</th></tr></thead>
+      <tbody id="history-body"><tr><td colspan="3" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let histChart = null;
+
+async function loadHistory() {
+  const pair = document.getElementById('base-filter').value;
+  const days = document.getElementById('days-filter').value;
+  const data = await api(`/api/rates/${pair}?days=${days}`);
+
+  // График
+  if (histChart) histChart.destroy();
+  histChart = new Chart(document.getElementById('historyChart'), {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [{
+        label: pair.replace('-','/'),
+        data: data.map(d => d.rate),
+        borderColor: '#4f8ef7',
+        backgroundColor: 'rgba(79,142,247,0.08)',
+        borderWidth: 2, pointRadius: 3, tension: 0.3, fill: true
+      }]
+    },
+    options: { responsive: true, plugins: { legend: { display: false } } }
+  });
+
+  // Таблица с изменением
+  const rows = [...data].reverse();
+  document.getElementById('history-body').innerHTML = rows.map((r, i) => {
+    const prev = rows[i+1];
+    const diff = prev ? r.rate - prev.rate : 0;
+    const cls = diff > 0 ? 'up' : diff < 0 ? 'down' : '';
+    const sign = diff > 0 ? '+' : '';
+    return `<tr>
+      <td>${r.date}</td>
+      <td>${r.rate.toFixed(4)}</td>
+      <td class="${cls}">${prev ? sign + diff.toFixed(4) : '—'}</td>
+    </tr>`;
+  }).join('');
+}
+
+loadHistory();
+</script>
+{% endblock %}

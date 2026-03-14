@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Currency Tracker</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css"/>
+</head>
+<body>
+  <nav class="navbar">
+    <div class="nav-brand">💱 Currency Tracker</div>
+    <ul class="nav-links">
+      <li><a href="/" id="nav-dashboard">Дашборд</a></li>
+      <li><a href="/rates" id="nav-rates">Курсы</a></li>
+      <li><a href="/converter" id="nav-converter">Конвертер</a></li>
+      <li><a href="/analysis" id="nav-analysis">Анализ</a></li>
+      <li><a href="/logs" id="nav-logs">Логи</a></li>
+    </ul>
+    <div class="nav-status">
+      <span id="db-status" class="status-dot"></span>
+      <span id="db-info">...</span>
+    </div>
+  </nav>
+
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <script src="/static/app.js"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Логи парсера</h1>
+  <button class="btn btn-primary" onclick="runParser()">▶ Запустить парсер</button>
+</div>
+
+<div id="run-status" class="alert" style="display:none"></div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th>ID</th><th>Источник</th><th>Дата</th><th>Статус</th><th>Записей</th><th>Время (мс)</th><th>Ошибка</th></tr></thead>
+      <tbody id="logs-body"><tr><td colspan="7" class="loading">Загрузка...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadLogs() {
+  const data = await api('/api/logs?limit=50');
+  document.getElementById('logs-body').innerHTML = data.map(r => `
+    <tr>
+      <td>${r.log_id}</td>
+      <td>${r.source}</td>
+      <td>${r.parse_date}</td>
+      <td><span class="badge badge-${r.status === 'success' ? 'green' : 'red'}">${r.status}</span></td>
+      <td>${r.records_added}</td>
+      <td>${r.execution_time_ms}</td>
+      <td class="error-cell">${r.error_message || '—'}</td>
+    </tr>`).join('');
+}
+
+async function runParser() {
+  const el = document.getElementById('run-status');
+  el.style.display = 'block';
+  el.className = 'alert alert-info';
+  el.textContent = 'Запуск парсера...';
+  const d = await api('/api/parse/run', 'POST');
+  el.className = 'alert ' + (d.success ? 'alert-success' : 'alert-error');
+  el.textContent = d.message;
+  if (d.success) setTimeout(loadLogs, 1000);
+}
+
+loadLogs();
+</script>
+{% endblock %}

@@ -1,31 +1,33 @@
 #!/usr/bin/env python3
 """
 FastAPI сервер для Currency Tracker
-Документация: http://localhost:8000/docs
+Веб-интерфейс: http://localhost:8000
+Документация:  http://localhost:8000/docs
 """
 
-from fastapi import FastAPI, HTTPException, Query
+import os, sys, subprocess
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from typing import Optional
-from datetime import date
 from analyzer import CurrencyAnalyzer
 from database import Database
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 app = FastAPI(
     title="Currency Tracker API",
     description="API для получения и анализа курсов валют",
-    version="1.0.0"
+    version="2.0.0"
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+app.mount("/static", StaticFiles(directory=os.path.join(BASE_DIR, "static")), name="static")
+templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
-# --- Модели ответов ---
+# --- Pydantic модели ---
 
 class RateItem(BaseModel):
     base_currency: str
@@ -49,6 +51,7 @@ class VolatilityItem(BaseModel):
     currency_pair: str
     volatility: float
     avg_rate: float
+    data_points: int
 
 class ArbitrageItem(BaseModel):
     currency_a: str
@@ -56,89 +59,154 @@ class ArbitrageItem(BaseModel):
     currency_c: str
     profit_percent: float
 
-# --- Эндпоинты ---
+# --- Хелперы ---
 
-@app.get("/", tags=["Info"])
-def root():
-    return {"name": "Currency Tracker API", "version": "1.0.0", "docs": "/docs"}
+def _db():
+    db = Database()
+    db.connect()
+    return db
+
+def _pair(pair: str):
+    if "-" not in pair:
+        raise HTTPException(400, "Формат пары: BASE-TARGET, например USD-RUB")
+    return tuple(pair.upper().split("-", 1))
+
+
+# --- HTML страницы ---
+
+@app.get("/", include_in_schema=False)
+def page_dashboard(request: Request):
+    return templates.TemplateResponse("dashboard.html", {"request": request})
+
+@app.get("/rates", include_in_schema=False)
+def page_rates(request: Request):
+    return templates.TemplateResponse("rates.html", {"request": request})
+
+@app.get("/converter", include_in_schema=False)
+def page_converter(request: Request):
+    return templates.TemplateResponse("converter.html", {"request": request})
+
+@app.get("/analysis", include_in_schema=False)
+def page_analysis(request: Request):
+    return templates.TemplateResponse("analysis.html", {"request": request})
+
+@app.get("/logs", include_in_schema=False)
+def page_logs(request: Request):
+    return templates.TemplateResponse("logs.html", {"request": request})
+
+
+# --- API ---
+
+@app.get("/api", tags=["Info"])
+def api_root():
+    return {"name": "Currency Tracker API", "version": "2.0.0", "docs": "/docs", "ui": "/"}
+
+
+@app.get("/api/status", tags=["Info"])
+def status():
+    """Статус БД"""
+    db = _db()
+    db.cursor.execute("""
+        SELECT (SELECT COUNT(*) FROM currencies),
+               (SELECT COUNT(*) FROM exchange_rates),
+               (SELECT COUNT(*) FROM data_sources),
+               (SELECT MAX(rate_date) FROM exchange_rates)
+    """)
+    r = db.cursor.fetchone()
+    db.disconnect()
+    return {"db": "connected", "currencies": r[0], "exchange_rates": r[1],
+            "data_sources": r[2], "last_update": r[3].isoformat() if r[3] else None}
+
+
+@app.get("/api/currencies", tags=["Currencies"])
+def list_currencies():
+    """Список всех валют"""
+    db = _db()
+    rows = db.fetchall_dict("SELECT code, name, symbol FROM currencies ORDER BY code")
+    db.disconnect()
+    return rows
 
 
 @app.get("/api/rates/latest", response_model=list[RateItem], tags=["Rates"])
-def get_latest_rates():
-    """Последние курсы всех валютных пар"""
-    db = Database()
-    db.connect()
-    db.cursor.execute("SELECT * FROM v_latest_rates")
+def get_latest_rates(source: Optional[str] = Query(None)):
+    """Последние курсы всех пар"""
+    db = _db()
+    if source:
+        db.cursor.execute("SELECT * FROM v_latest_rates WHERE source_name ILIKE %s", (f"%{source}%",))
+    else:
+        db.cursor.execute("SELECT * FROM v_latest_rates")
     rows = db.cursor.fetchall()
     db.disconnect()
-    return [
-        RateItem(
-            base_currency=r[0], target_currency=r[1], currency_pair=r[2],
-            rate=float(r[3]), rate_date=r[4].isoformat(), source_name=r[5]
-        ) for r in rows
-    ]
+    return [RateItem(base_currency=r[0], target_currency=r[1], currency_pair=r[2],
+                     rate=float(r[3]), rate_date=r[4].isoformat(), source_name=r[5]) for r in rows]
 
 
 @app.get("/api/rates/{pair}", response_model=list[HistoryItem], tags=["Rates"])
-def get_rate_history(
-    pair: str,
-    days: int = Query(default=30, ge=1, le=365, description="Количество дней")
-):
-    """История курса валютной пары. Формат пары: USD-RUB"""
-    if "-" not in pair:
-        raise HTTPException(status_code=400, detail="Формат пары: BASE-TARGET, например USD-RUB")
-    base, target = pair.upper().split("-", 1)
-    db = Database()
-    db.connect()
+def get_rate_history(pair: str, days: int = Query(default=30, ge=1, le=365)):
+    """История курса. Формат: USD-RUB"""
+    base, target = _pair(pair)
+    db = _db()
     db.cursor.execute(
         """SELECT rate_date, rate FROM exchange_rates
-           WHERE base_currency = %s AND target_currency = %s
-             AND rate_date >= CURRENT_DATE - INTERVAL '%s days'
+           WHERE base_currency=%s AND target_currency=%s
+             AND rate_date >= CURRENT_DATE - (%s||' days')::INTERVAL
            ORDER BY rate_date""",
         (base, target, days)
     )
     rows = db.cursor.fetchall()
     db.disconnect()
     if not rows:
-        raise HTTPException(status_code=404, detail=f"Данные для {pair} не найдены")
+        raise HTTPException(404, f"Данные для {pair} не найдены")
     return [HistoryItem(date=r[0].isoformat(), rate=float(r[1])) for r in rows]
 
 
 @app.get("/api/convert", response_model=ConvertResponse, tags=["Converter"])
 def convert_currency(
-    amount: float = Query(..., gt=0, description="Сумма"),
-    from_curr: str = Query(..., description="Исходная валюта, например USD"),
-    to_curr: str = Query(..., description="Целевая валюта, например RUB")
+    amount: float = Query(..., gt=0),
+    from_curr: str = Query(...),
+    to_curr: str = Query(...)
 ):
-    """Конвертация валют по актуальному курсу"""
-    db = Database()
-    db.connect()
+    """Конвертация валют"""
+    db = _db()
     db.cursor.execute("SELECT convert_currency(%s, %s, %s)", (amount, from_curr.upper(), to_curr.upper()))
     result = db.cursor.fetchone()
     db.disconnect()
-    return ConvertResponse(
-        amount=amount,
-        from_currency=from_curr.upper(),
-        to_currency=to_curr.upper(),
-        result=float(result[0]) if result and result[0] else None
-    )
+    return ConvertResponse(amount=amount, from_currency=from_curr.upper(), to_currency=to_curr.upper(),
+                           result=float(result[0]) if result and result[0] else None)
 
 
 @app.get("/api/analysis/{pair}", tags=["Analysis"])
-def analyze_pair(
-    pair: str,
-    days: int = Query(default=30, ge=1, le=365)
-):
-    """Полный анализ валютной пары: тренд, RSI, прогноз, статистика. Формат: USD-RUB"""
+def analyze_pair(pair: str, days: int = Query(default=30, ge=1, le=365)):
+    """Анализ пары: тренд, RSI, прогноз. Формат: USD-RUB"""
     analyzer = CurrencyAnalyzer()
     report = analyzer.generate_report(pair.replace("-", "/").upper(), days)
     analyzer.close()
     return report
 
 
+@app.get("/api/correlation", tags=["Analysis"])
+def get_correlation(
+    pair1: str = Query(...),
+    pair2: str = Query(...),
+    days: int = Query(default=30, ge=7, le=365)
+):
+    """Корреляция двух пар"""
+    analyzer = CurrencyAnalyzer()
+    corr = analyzer.get_correlation(pair1.replace("-", "/").upper(), pair2.replace("-", "/").upper(), days)
+    analyzer.close()
+    return {
+        "pair1": pair1.upper(), "pair2": pair2.upper(), "days": days, "correlation": corr,
+        "interpretation": (
+            "сильная положительная" if corr and corr > 0.7 else
+            "сильная отрицательная" if corr and corr < -0.7 else
+            "умеренная" if corr else "недостаточно данных"
+        )
+    }
+
+
 @app.get("/api/volatility", response_model=list[VolatilityItem], tags=["Analysis"])
 def get_volatility(days: int = Query(default=7, ge=1, le=90)):
-    """Рейтинг волатильности валютных пар"""
+    """Рейтинг волатильности"""
     analyzer = CurrencyAnalyzer()
     ranking = analyzer.get_volatility_ranking(days)
     analyzer.close()
@@ -147,7 +215,7 @@ def get_volatility(days: int = Query(default=7, ge=1, le=90)):
 
 @app.get("/api/arbitrage", response_model=list[ArbitrageItem], tags=["Analysis"])
 def find_arbitrage():
-    """Поиск арбитражных возможностей"""
+    """Арбитражные возможности"""
     analyzer = CurrencyAnalyzer()
     opportunities = analyzer.find_arbitrage()
     analyzer.close()
@@ -156,11 +224,50 @@ def find_arbitrage():
 
 @app.get("/api/alerts", tags=["Alerts"])
 def check_alerts():
-    """Проверка сработавших алертов"""
+    """Сработавшие алерты"""
     analyzer = CurrencyAnalyzer()
     alerts = analyzer.check_alerts()
     analyzer.close()
     return alerts
+
+
+@app.get("/api/logs", tags=["Logs"])
+def get_parsing_logs(limit: int = Query(default=20, ge=1, le=100)):
+    """История запусков парсера"""
+    db = _db()
+    rows = db.fetchall_dict(
+        """SELECT pl.log_id, ds.name AS source, pl.parse_date, pl.status,
+                  pl.records_added, pl.execution_time_ms, pl.error_message
+           FROM parsing_log pl JOIN data_sources ds USING (source_id)
+           ORDER BY pl.log_id DESC LIMIT %s""",
+        (limit,)
+    )
+    db.disconnect()
+    for r in rows:
+        if r.get("parse_date"):
+            r["parse_date"] = str(r["parse_date"])
+    return rows
+
+
+@app.post("/api/parse/run", tags=["Logs"])
+def run_parser():
+    """Запустить парсер вручную"""
+    try:
+        result = subprocess.run(
+            [sys.executable, os.path.join(BASE_DIR, "main.py")],
+            capture_output=True, text=True, timeout=120, cwd=BASE_DIR
+        )
+        success = result.returncode == 0
+        return {
+            "success": success,
+            "message": "Парсер выполнен успешно" if success else "Ошибка парсера",
+            "output": result.stdout[-1000:] if result.stdout else "",
+            "error": result.stderr[-500:] if result.stderr else ""
+        }
+    except subprocess.TimeoutExpired:
+        return {"success": False, "message": "Таймаут — парсер работал дольше 120 сек"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
 
 
 if __name__ == "__main__":

@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header"><h1>Анализ</h1></div>
+
+<div class="grid-2">
+  <!-- Анализ пары -->
+  <div class="card">
+    <h2>Анализ валютной пары</h2>
+    <div class="flex-row gap mt-sm">
+      <select id="an-pair" class="input-lg">
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+        <option value="CNY-RUB">CNY/RUB</option>
+        <option value="USD-EUR">USD/EUR</option>
+      </select>
+      <select id="an-days">
+        <option value="7">7 дней</option>
+        <option value="14">14 дней</option>
+        <option value="30" selected>30 дней</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadAnalysis()">Анализ</button>
+    </div>
+    <div id="analysis-result" class="analysis-block mt"></div>
+  </div>
+
+  <!-- Корреляция -->
+  <div class="card">
+    <h2>Корреляция пар</h2>
+    <div class="flex-col gap mt-sm">
+      <select id="corr-pair1" class="input-lg">
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+      </select>
+      <select id="corr-pair2" class="input-lg">
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+      </select>
+      <button class="btn btn-primary" onclick="loadCorrelation()">Рассчитать</button>
+    </div>
+    <div id="corr-result" class="analysis-block mt"></div>
+  </div>
+</div>
+
+<!-- Арбитраж -->
+<div class="card mt">
+  <div class="card-header">
+    <h2>Арбитражные возможности</h2>
+    <button class="btn btn-sm" onclick="loadArbitrage()">↻</button>
+  </div>
+  <div id="arbitrage-result">Загрузка...</div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+async function loadAnalysis() {
+  const pair = document.getElementById('an-pair').value;
+  const days = document.getElementById('an-days').value;
+  const d = await api(`/api/analysis/${pair}?days=${days}`);
+  const s = d.statistics || {};
+  const rsiClass = d.rsi > 70 ? 'badge-red' : d.rsi < 30 ? 'badge-green' : 'badge-blue';
+  document.getElementById('analysis-result').innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><span class="metric-label">Тренд</span><span class="badge badge-${d.trend === 'up' ? 'green' : d.trend === 'down' ? 'red' : 'blue'}">${d.trend || '—'}</span></div>
+      <div class="metric"><span class="metric-label">RSI</span><span class="badge ${rsiClass}">${d.rsi ? d.rsi.toFixed(2) : '—'}</span></div>
+      <div class="metric"><span class="metric-label">Прогноз</span><b>${d.predicted_rate ? d.predicted_rate.toFixed(4) : '—'}</b></div>
+      <div class="metric"><span class="metric-label">Среднее</span><b>${s.avg_rate ? parseFloat(s.avg_rate).toFixed(4) : '—'}</b></div>
+      <div class="metric"><span class="metric-label">Мин</span><b>${s.min_rate ? parseFloat(s.min_rate).toFixed(4) : '—'}</b></div>
+      <div class="metric"><span class="metric-label">Макс</span><b>${s.max_rate ? parseFloat(s.max_rate).toFixed(4) : '—'}</b></div>
+      <div class="metric"><span class="metric-label">Волатильность</span><b>${s.volatility ? parseFloat(s.volatility).toFixed(4) : '—'}</b></div>
+      <div class="metric"><span class="metric-label">Точек данных</span><b>${s.data_points || '—'}</b></div>
+    </div>`;
+}
+
+async function loadCorrelation() {
+  const p1 = document.getElementById('corr-pair1').value;
+  const p2 = document.getElementById('corr-pair2').value;
+  const d = await api(`/api/correlation?pair1=${p1}&pair2=${p2}&days=30`);
+  const val = d.correlation !== null ? d.correlation.toFixed(4) : 'N/A';
+  const cls = d.correlation > 0.7 ? 'badge-green' : d.correlation < -0.7 ? 'badge-red' : 'badge-blue';
+  document.getElementById('corr-result').innerHTML = `
+    <div class="metric-grid">
+      <div class="metric"><span class="metric-label">${p1.replace('-','/')} ↔ ${p2.replace('-','/')}</span></div>
+      <div class="metric"><span class="metric-label">Коэффициент</span><b>${val}</b></div>
+      <div class="metric"><span class="metric-label">Интерпретация</span><span class="badge ${cls}">${d.interpretation}</span></div>
+    </div>`;
+}
+
+async function loadArbitrage() {
+  const data = await api('/api/arbitrage');
+  const el = document.getElementById('arbitrage-result');
+  if (!data.length) {
+    el.innerHTML = '<p class="muted">Арбитражных возможностей не найдено</p>';
+    return;
+  }
+  el.innerHTML = `<div class="table-wrap"><table>
+    <thead><tr><th>A</th><th>B</th><th>C</th><th>Прибыль %</th></tr></thead>
+    <tbody>${data.map(o => `<tr>
+      <td>${o.currency_a}</td><td>${o.currency_b}</td><td>${o.currency_c}</td>
+      <td class="up">+${o.profit_percent.toFixed(4)}%</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+loadAnalysis(); loadArbitrage();
+</script>
+{% endblock %}
