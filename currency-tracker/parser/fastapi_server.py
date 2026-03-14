@@ -20,6 +20,27 @@ from database import Database
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 logger = logging.getLogger("scheduler")
 
+# --- Простой in-memory кэш ---
+_cache = {}
+_cache_ttl = {}
+
+def cache_get(key):
+    if key in _cache and time.time() < _cache_ttl.get(key, 0):
+        return _cache[key]
+    return None
+
+def cache_set(key, value, ttl=60):
+    _cache[key] = value
+    _cache_ttl[key] = time.time() + ttl
+
+def cache_clear(pattern=None):
+    if pattern is None:
+        _cache.clear(); _cache_ttl.clear()
+    else:
+        for k in list(_cache.keys()):
+            if pattern in k:
+                _cache.pop(k, None); _cache_ttl.pop(k, None)
+
 # --- Фоновый планировщик ---
 
 def _scheduler_loop():
@@ -38,6 +59,7 @@ def _scheduler_loop():
             try:
                 parse_main()
                 last_parse_day = now.date()
+                cache_clear()  # сбрасываем кэш после обновления данных
                 logger.info("Автопарсинг: завершён")
             except Exception as e:
                 logger.error(f"Автопарсинг: ошибка — {e}")
@@ -46,11 +68,23 @@ def _scheduler_loop():
         if now.hour != last_alert_hour:
             try:
                 from analyzer import CurrencyAnalyzer
+                from telegram_notify import send_alert, send_daily_summary, is_configured
                 a = CurrencyAnalyzer()
                 alerts = a.check_alerts()
                 a.close()
                 if alerts:
                     logger.info(f"Алерты: сработало {len(alerts)}")
+                    if is_configured():
+                        for alert in alerts:
+                            send_alert(alert)
+                # Ежедневная сводка в 9:00
+                if now.hour == 9 and is_configured():
+                    db = _db()
+                    db.cursor.execute("SELECT * FROM v_latest_rates LIMIT 5")
+                    rows = db.cursor.fetchall()
+                    db.disconnect()
+                    top = [{"currency_pair": r[2], "rate": r[3], "source_name": r[5]} for r in rows]
+                    send_daily_summary(top)
                 last_alert_hour = now.hour
             except Exception as e:
                 logger.error(f"Алерты: ошибка — {e}")
@@ -163,6 +197,7 @@ def api_root():
 @app.get("/api/scheduler/status", tags=["Info"])
 def scheduler_status():
     """Статус планировщика и время следующего парсинга"""
+    from telegram_notify import is_configured
     now = datetime.now()
     next_parse = now.replace(hour=9, minute=0, second=0, microsecond=0)
     if now.hour >= 9:
@@ -172,8 +207,19 @@ def scheduler_status():
         "scheduler": "running",
         "next_parse": next_parse.strftime("%Y-%m-%d %H:%M"),
         "next_alert_check": now.replace(minute=0, second=0).strftime("%Y-%m-%d %H:%M"),
-        "server_time": now.strftime("%Y-%m-%d %H:%M:%S")
+        "server_time": now.strftime("%Y-%m-%d %H:%M:%S"),
+        "telegram": "configured" if is_configured() else "not configured",
     }
+
+
+@app.post("/api/telegram/test", tags=["Info"])
+def telegram_test():
+    """Отправить тестовое сообщение в Telegram"""
+    from telegram_notify import send_message, is_configured
+    if not is_configured():
+        return {"success": False, "message": "Telegram не настроен. Добавьте TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID в .env"}
+    ok = send_message("✅ <b>Currency Tracker</b>\nТестовое сообщение — Telegram работает!")
+    return {"success": ok, "message": "Сообщение отправлено" if ok else "Ошибка отправки"}
 
 
 @app.get("/api/status", tags=["Info"])
@@ -204,6 +250,10 @@ def list_currencies():
 @app.get("/api/rates/latest", response_model=list[RateItem], tags=["Rates"])
 def get_latest_rates(source: Optional[str] = Query(None)):
     """Последние курсы всех пар"""
+    cache_key = f"latest:{source or 'all'}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
     db = _db()
     if source:
         db.cursor.execute("SELECT * FROM v_latest_rates WHERE source_name ILIKE %s", (f"%{source}%",))
@@ -211,8 +261,10 @@ def get_latest_rates(source: Optional[str] = Query(None)):
         db.cursor.execute("SELECT * FROM v_latest_rates")
     rows = db.cursor.fetchall()
     db.disconnect()
-    return [RateItem(base_currency=r[0], target_currency=r[1], currency_pair=r[2],
-                     rate=float(r[3]), rate_date=r[4].isoformat(), source_name=r[5]) for r in rows]
+    result = [RateItem(base_currency=r[0], target_currency=r[1], currency_pair=r[2],
+                       rate=float(r[3]), rate_date=r[4].isoformat(), source_name=r[5]) for r in rows]
+    cache_set(cache_key, result, ttl=60)
+    return result
 
 
 @app.get("/api/rates/{pair}", response_model=list[HistoryItem], tags=["Rates"])
@@ -281,10 +333,16 @@ def get_correlation(
 @app.get("/api/volatility", response_model=list[VolatilityItem], tags=["Analysis"])
 def get_volatility(days: int = Query(default=7, ge=1, le=90)):
     """Рейтинг волатильности"""
+    cache_key = f"volatility:{days}"
+    cached = cache_get(cache_key)
+    if cached:
+        return cached
     analyzer = CurrencyAnalyzer()
     ranking = analyzer.get_volatility_ranking(days)
     analyzer.close()
-    return [VolatilityItem(**item) for item in ranking]
+    result = [VolatilityItem(**item) for item in ranking]
+    cache_set(cache_key, result, ttl=120)
+    return result
 
 
 @app.get("/api/arbitrage", response_model=list[ArbitrageItem], tags=["Analysis"])
@@ -342,6 +400,30 @@ def run_parser():
         return {"success": False, "message": "Таймаут — парсер работал дольше 120 сек"}
     except Exception as e:
         return {"success": False, "message": str(e)}
+
+
+@app.get("/api/analysis/{pair}/bollinger", tags=["Analysis"])
+def get_bollinger(pair: str, days: int = Query(default=60, ge=20, le=365), window: int = Query(default=20, ge=5, le=50)):
+    """Bollinger Bands для пары. Формат: USD-RUB"""
+    base, target = _pair(pair)
+    analyzer = CurrencyAnalyzer()
+    data = analyzer.get_bollinger_bands(base, target, days, window)
+    analyzer.close()
+    if not data:
+        raise HTTPException(404, f"Недостаточно данных для {pair}")
+    return data
+
+
+@app.get("/api/analysis/{pair}/macd", tags=["Analysis"])
+def get_macd(pair: str, days: int = Query(default=60, ge=30, le=365)):
+    """MACD для пары. Формат: USD-RUB"""
+    base, target = _pair(pair)
+    analyzer = CurrencyAnalyzer()
+    data = analyzer.get_macd(base, target, days)
+    analyzer.close()
+    if not data:
+        raise HTTPException(404, f"Недостаточно данных для {pair}")
+    return data
 
 
 @app.get("/api/rates/compare/{pair}", tags=["Compare"])

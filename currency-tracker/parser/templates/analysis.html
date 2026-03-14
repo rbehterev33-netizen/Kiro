@@ -2,25 +2,51 @@
 {% block content %}
 <div class="page-header"><h1>Анализ</h1></div>
 
-<!-- Анализ пары — полная ширина -->
 <div class="card">
   <div class="card-header">
     <h2>Анализ валютной пары</h2>
     <div class="flex-row gap">
-      <select id="an-pair"></select>
+      <select id="an-pair" onchange="onPairChange()"></select>
       <div class="period-btns">
         <button class="period-btn" onclick="setAnDays(7,this)">7д</button>
         <button class="period-btn active" onclick="setAnDays(30,this)">30д</button>
         <button class="period-btn" onclick="setAnDays(90,this)">90д</button>
       </div>
-      <button class="btn btn-primary" onclick="loadAnalysis()">Анализ</button>
+      <button class="btn btn-primary" onclick="loadAll()">Анализ</button>
     </div>
   </div>
   <div id="analysis-result"></div>
 </div>
 
+<!-- Вкладки с графиками -->
+<div class="card mt">
+  <div class="tabs">
+    <button class="tab-btn active" onclick="switchTab('bollinger',this)">Bollinger Bands</button>
+    <button class="tab-btn" onclick="switchTab('macd',this)">MACD</button>
+  </div>
+
+  <div id="tab-bollinger" class="tab-panel active">
+    <div class="card-header" style="padding:0 0 12px 0">
+      <span class="muted" style="font-size:12px">Скользящая средняя ± 2σ. Выход за полосы = сигнал разворота.</span>
+      <select id="bb-window" onchange="loadBollinger()">
+        <option value="10">Окно 10</option>
+        <option value="20" selected>Окно 20</option>
+        <option value="30">Окно 30</option>
+      </select>
+    </div>
+    <canvas id="bollingerChart" height="160"></canvas>
+  </div>
+
+  <div id="tab-macd" class="tab-panel">
+    <div class="card-header" style="padding:0 0 12px 0">
+      <span class="muted" style="font-size:12px">MACD (12,26,9). Пересечение сигнальной линии = сигнал входа/выхода.</span>
+    </div>
+    <canvas id="macdChart" height="100"></canvas>
+    <canvas id="macdHistChart" height="80" style="margin-top:8px"></canvas>
+  </div>
+</div>
+
 <div class="grid-2 mt">
-  <!-- Корреляция -->
   <div class="card">
     <h2>Корреляция пар</h2>
     <div class="flex-col gap mt-sm">
@@ -37,7 +63,6 @@
     <div id="corr-result" class="mt"></div>
   </div>
 
-  <!-- Арбитраж -->
   <div class="card">
     <div class="card-header">
       <h2>Арбитражные возможности</h2>
@@ -51,6 +76,16 @@
 {% block scripts %}
 <script>
 let anDays = 30;
+let bollingerChart = null, macdChart = null, macdHistChart = null;
+
+function switchTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'bollinger') loadBollinger();
+  if (name === 'macd') loadMACD();
+}
 
 async function populatePairs() {
   const data = await api('/api/rates/latest');
@@ -63,14 +98,22 @@ async function populatePairs() {
   document.getElementById('an-pair').value = 'USD-RUB';
   document.getElementById('corr-pair1').value = 'USD-RUB';
   document.getElementById('corr-pair2').value = 'EUR-RUB';
-  loadAnalysis();
+  loadAll();
   loadArbitrage();
 }
 
+function onPairChange() { /* пара изменена — не перезагружаем автоматически */ }
+
 function setAnDays(d, btn) {
   anDays = d;
-  document.querySelectorAll('.card .period-btns .period-btn').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('.card:first-child .period-btns .period-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+}
+
+function loadAll() {
+  loadAnalysis();
+  loadBollinger();
+  loadMACD();
 }
 
 async function loadAnalysis() {
@@ -120,6 +163,100 @@ async function loadAnalysis() {
         <div style="font-size:12px;color:var(--text2)">${s.date_from || '—'} → ${s.date_to || '—'}</div>
       </div>
     </div>`;
+}
+
+async function loadBollinger() {
+  const pair = document.getElementById('an-pair').value;
+  const window = document.getElementById('bb-window').value;
+  const days = Math.max(anDays, 60);
+  const data = await api(`/api/analysis/${pair}/bollinger?days=${days}&window=${window}`);
+  if (!data || !data.length) return;
+
+  const labels = data.map(d => d.date);
+  const price  = data.map(d => d.rate);
+  const sma    = data.map(d => d.sma);
+  const upper  = data.map(d => d.upper);
+  const lower  = data.map(d => d.lower);
+
+  if (bollingerChart) bollingerChart.destroy();
+  bollingerChart = new Chart(document.getElementById('bollingerChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Верхняя полоса', data: upper, borderColor: 'rgba(239,68,68,0.6)', borderWidth: 1, borderDash: [4,3], pointRadius: 0, fill: false },
+        { label: 'SMA', data: sma, borderColor: '#f59e0b', borderWidth: 1.5, pointRadius: 0, fill: false },
+        { label: 'Нижняя полоса', data: lower, borderColor: 'rgba(34,197,94,0.6)', borderWidth: 1, borderDash: [4,3], pointRadius: 0,
+          fill: { target: 0, above: 'rgba(79,142,247,0.04)' } },
+        { label: pair.replace('-','/'), data: price, borderColor: '#4f8ef7', borderWidth: 2, pointRadius: 0, fill: false },
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#8892a4', boxWidth: 12, font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, color: '#8892a4' }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+}
+
+async function loadMACD() {
+  const pair = document.getElementById('an-pair').value;
+  const days = Math.max(anDays, 60);
+  const data = await api(`/api/analysis/${pair}/macd?days=${days}`);
+  if (!data || !data.length) return;
+
+  const labels    = data.map(d => d.date);
+  const macdLine  = data.map(d => d.macd);
+  const sigLine   = data.map(d => d.signal);
+  const histogram = data.map(d => d.histogram);
+  const histColors = histogram.map(v => v == null ? 'transparent' : v >= 0 ? 'rgba(34,197,94,0.7)' : 'rgba(239,68,68,0.7)');
+
+  if (macdChart) macdChart.destroy();
+  macdChart = new Chart(document.getElementById('macdChart'), {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [
+        { label: 'MACD', data: macdLine, borderColor: '#4f8ef7', borderWidth: 1.5, pointRadius: 0, fill: false },
+        { label: 'Signal', data: sigLine, borderColor: '#f59e0b', borderWidth: 1.5, pointRadius: 0, fill: false },
+      ]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#8892a4', boxWidth: 12, font: { size: 11 } } } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, color: '#8892a4' }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+
+  if (macdHistChart) macdHistChart.destroy();
+  macdHistChart = new Chart(document.getElementById('macdHistChart'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Гистограмма',
+        data: histogram,
+        backgroundColor: histColors,
+        borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 10, color: '#8892a4' }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
 }
 
 async function loadCorrelation() {
