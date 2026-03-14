@@ -119,38 +119,6 @@ def cmd_help(args):
     print("  python cli.py visualize USD/RUB 30")
     print("  python cli.py export csv USD/RUB 30")
 
-def main():
-    if len(sys.argv) < 2:
-        cmd_help([])
-        return
-    
-    command = sys.argv[1]
-    args = sys.argv[2:]
-    
-    commands = {
-        'trend': cmd_trend,
-        'arbitrage': cmd_arbitrage,
-        'volatility': cmd_volatility,
-        'report': cmd_report,
-        'alerts': cmd_alerts,
-        'visualize': cmd_visualize,
-        'export': cmd_export,
-        'help': cmd_help
-    }
-    
-    if command in commands:
-        try:
-            commands[command](args)
-        except Exception as e:
-            print(f"Ошибка: {e}")
-    else:
-        print(f"Неизвестная команда: {command}")
-        cmd_help([])
-
-if __name__ == '__main__':
-    main()
-
-
 def cmd_visualize(args):
     """Визуализация данных"""
     if len(args) < 1:
@@ -191,3 +159,34 @@ def cmd_export(args):
         print(f"Неизвестный формат: {format_type}")
     
     exporter.close()
+
+def main():
+    if len(sys.argv) < 2:
+        cmd_help([])
+        return
+    
+    command = sys.argv[1]
+    args = sys.argv[2:]
+    
+    commands = {
+        'trend': cmd_trend,
+        'arbitrage': cmd_arbitrage,
+        'volatility': cmd_volatility,
+        'report': cmd_report,
+        'alerts': cmd_alerts,
+        'visualize': cmd_visualize,
+        'export': cmd_export,
+        'help': cmd_help
+    }
+    
+    if command in commands:
+        try:
+            commands[command](args)
+        except Exception as e:
+            print(f"Ошибка: {e}")
+    else:
+        print(f"Неизвестная команда: {command}")
+        cmd_help([])
+
+if __name__ == '__main__':
+    main()
