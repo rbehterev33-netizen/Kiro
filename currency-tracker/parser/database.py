@@ -71,12 +71,13 @@ class Database:
         return result[0] if result else None
 
     def insert_rates(self, rates_data):
-        """Вставка курсов валют"""
+        """Вставка курсов валют — обновляет если запись на эту дату уже есть"""
         query = """
             INSERT INTO exchange_rates
             (base_currency, target_currency, rate, rate_date, source_id)
             VALUES %s
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (base_currency, target_currency, rate_date, source_id)
+            DO UPDATE SET rate = EXCLUDED.rate
         """
         try:
             execute_values(self.cursor, query, rates_data)
