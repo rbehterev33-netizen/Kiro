@@ -20,6 +20,13 @@
 - 🔍 Построение аналитических отчётов
 - ⚡ Оптимизированная структура БД с индексами
 - 🔄 Автоматизация процесса сбора данных
+- 📉 Расчет технических индикаторов (RSI, SMA)
+- 🎯 Определение трендов и прогнозирование
+- 💱 Поиск арбитражных возможностей
+- 🔔 Система алертов и уведомлений
+- 📊 Визуализация данных
+- 🌐 REST API для интеграции
+- 📤 Экспорт данных в CSV/JSON
 
 ## Целевая аудитория
 
@@ -101,7 +108,7 @@ volatility     DECIMAL(10,4)
 ### Требования
 
 - PostgreSQL 12+ (рекомендуется 16+)
-- Python 3.8+ или Node.js 16+ (для парсера)
+- Python 3.8+
 - Git
 
 ### Установка
@@ -127,7 +134,25 @@ psql -U postgres -f 00_create_database.sql
 deploy.bat
 ```
 
-4. Проверьте установку:
+4. Установите зависимости Python:
+```bash
+cd ../parser
+pip install -r requirements.txt
+```
+
+5. Настройте конфигурацию:
+```bash
+cp .env.example .env
+# Отредактируйте .env с вашими параметрами БД
+```
+
+6. Запустите парсер:
+```bash
+python main.py
+```
+
+### Проверка установки
+
 ```bash
 psql -U postgres -d currency_tracker -c "\dt"
 ```
@@ -201,48 +226,125 @@ LIMIT 10;
 
 ## 🔧 Конфигурация парсера
 
-### Настройка источников данных
+### Настройка переменных окружения
 
-```python
-# config.py
-SOURCES = {
-    'cbr': {
-        'url': 'https://www.cbr.ru/scripts/XML_daily.asp',
-        'enabled': True,
-        'priority': 1
-    },
-    'ecb': {
-        'url': 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-daily.xml',
-        'enabled': True,
-        'priority': 2
-    }
-}
+Создайте файл `.env` в папке `parser/`:
 
-DATABASE = {
-    'host': 'localhost',
-    'port': 5432,
-    'database': 'currency_tracker',
-    'user': 'postgres',
-    'password': 'your_password'
-}
+```bash
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=currency_tracker
+DB_USER=postgres
+DB_PASSWORD=your_password
+
+PARSE_INTERVAL_HOURS=24
+LOG_LEVEL=INFO
+```
+
+### Источники данных
+
+Парсер поддерживает:
+- Центральный Банк России (ЦБ РФ)
+- Европейский Центральный Банк (ЕЦБ)
+
+Настройка в `parser/config.py`
+
+### Запуск парсера
+
+```bash
+# Установка зависимостей
+cd parser
+pip install -r requirements.txt
+
+# Настройка конфигурации
+cp .env.example .env
+# Отредактируйте .env файл с вашими параметрами БД
+
+# Запуск парсера
+python main.py
 ```
 
 ### Автоматизация сбора данных
 
 ```bash
-# Добавьте в crontab для ежедневного запуска в 9:00
-0 9 * * * /usr/bin/python3 /path/to/parser.py >> /var/log/currency_parser.log 2>&1
+# Linux/Mac - добавьте в crontab для ежедневного запуска в 9:00
+0 9 * * * cd /path/to/currency-tracker/parser && /usr/bin/python3 main.py >> /var/log/currency_parser.log 2>&1
+
+# Windows - создайте задачу в планировщике задач
+# Программа: python
+# Аргументы: C:\path\to\currency-tracker\parser\main.py
+# Расписание: ежедневно в 9:00
 ```
 
-## 📈 Аналитические представления
+## 📈 Расширенная аналитика
 
-Проект включает готовые представления для анализа:
-
+### Представления
 - `v_latest_rates` - последние курсы всех валют
 - `v_daily_changes` - ежедневные изменения курсов
 - `v_weekly_statistics` - статистика за неделю
-- `v_monthly_trends` - тренды за месяц
-- `v_currency_correlations` - корреляции между валютами
+- `v_monthly_statistics` - статистика за месяц
+- `v_source_activity` - активность источников данных
+- `v_top_volatile_pairs` - топ волатильных пар
+
+### Функции
+- `convert_currency()` - конвертация валют
+- `get_cross_rate()` - расчет кросс-курсов
+- `predict_rate_sma()` - прогноз на основе SMA
+- `get_trend()` - определение тренда
+- `calculate_rsi()` - расчет RSI индикатора
+- `find_arbitrage_opportunities()` - поиск арбитража
+- `get_rate_history_json()` - экспорт в JSON
+
+### CLI интерфейс
+```bash
+# Анализ тренда
+python cli.py trend USD/RUB 7
+
+# Поиск арбитража
+python cli.py arbitrage
+
+# Рейтинг волатильности
+python cli.py volatility 7
+
+# Генерация отчета
+python cli.py report EUR/RUB 30
+
+# Проверка алертов
+python cli.py alerts
+
+# Визуализация графика
+python cli.py visualize USD/RUB 30
+
+# Экспорт данных
+python cli.py export csv USD/RUB 30
+python cli.py export json EUR/RUB 30
+```
+
+### REST API
+```bash
+# Запуск API сервера
+python api_server.py
+
+# Примеры запросов
+curl http://localhost:5000/api/rates/latest
+curl http://localhost:5000/api/rates/USD-RUB?days=30
+curl http://localhost:5000/api/convert?amount=100&from=USD&to=RUB
+curl http://localhost:5000/api/analysis/USD-RUB?days=30
+curl http://localhost:5000/api/arbitrage
+curl http://localhost:5000/api/volatility?days=7
+```
+
+### Планировщик задач
+```bash
+# Автоматический запуск парсинга, проверки алертов и расчета статистики
+python scheduler.py
+```
+
+### Система алертов
+Настройка уведомлений о важных событиях:
+- Превышение/падение курса ниже порога
+- Резкие изменения курса (в процентах)
+- Высокая волатильность
 
 ## 🛠️ Разработка
 
@@ -250,7 +352,11 @@ DATABASE = {
 
 ```
 currency-tracker/
-├── README.md                 # Этот файл
+├── README.md                 # Документация
+├── LICENSE                   # Лицензия MIT (EN)
+├── LICENSE_RU                # Лицензия MIT (RU)
+├── CHANGELOG.md              # История изменений
+├── .gitignore                # Игнорируемые файлы
 ├── scripts/                  # SQL скрипты
 │   ├── 00_create_database.sql
 │   ├── 01_create_tables.sql
@@ -262,13 +368,22 @@ currency-tracker/
 │   ├── 07_useful_queries.sql
 │   ├── deploy.sh
 │   └── deploy.bat
-├── parser/                   # Парсер данных
-│   ├── main.py
-│   ├── config.py
-│   └── requirements.txt
-└── docs/                     # Документация
-    ├── DATABASE_SCHEMA.md
-    └── API.md
+└── parser/                   # Парсер данных
+    ├── main.py               # Главный файл парсера
+    ├── config.py             # Конфигурация
+    ├── database.py           # Работа с БД
+    ├── analyzer.py           # Модуль анализа
+    ├── visualizer.py         # Визуализация
+    ├── exporter.py           # Экспорт данных
+    ├── api_server.py         # REST API
+    ├── scheduler.py          # Планировщик
+    ├── cli.py                # CLI интерфейс
+    ├── requirements.txt      # Зависимости
+    ├── .env.example          # Пример конфигурации
+    └── parsers/              # Парсеры источников
+        ├── __init__.py
+        ├── cbr_parser.py     # ЦБ РФ
+        └── ecb_parser.py     # ЕЦБ
 ```
 
 ### Добавление нового источника данных
