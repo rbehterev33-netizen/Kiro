@@ -2,16 +2,37 @@
 {% block content %}
 <div class="page-header">
   <h1>Логи парсера</h1>
-  <button class="btn btn-primary" onclick="runParser()">▶ Запустить парсер</button>
+  <div class="flex-row gap">
+    <button class="btn btn-sm" onclick="exportLogs()">↓ CSV</button>
+    <button class="btn btn-primary" id="run-btn" onclick="runParser()">▶ Запустить парсер</button>
+  </div>
 </div>
 
 <div id="run-status" class="alert" style="display:none"></div>
 
+<!-- Мини-статистика -->
+<div class="stats-grid" style="grid-template-columns:repeat(3,1fr);margin-bottom:16px">
+  <div class="stat-card"><div class="stat-label">Всего запусков</div><div class="stat-value" id="log-total">—</div></div>
+  <div class="stat-card"><div class="stat-label">Успешных</div><div class="stat-value" id="log-success" style="color:var(--green)">—</div></div>
+  <div class="stat-card"><div class="stat-label">Добавлено записей (всего)</div><div class="stat-value" id="log-records">—</div></div>
+</div>
+
 <div class="card">
+  <div class="card-header">
+    <div class="flex-row gap">
+      <input type="text" id="log-filter" placeholder="Фильтр по источнику..." oninput="filterLogs()" class="input-sm"/>
+      <select id="log-status-filter" onchange="filterLogs()">
+        <option value="">Все статусы</option>
+        <option value="success">success</option>
+        <option value="failed">failed</option>
+      </select>
+    </div>
+    <button class="btn btn-sm" onclick="loadLogs()">↻</button>
+  </div>
   <div class="table-wrap">
     <table>
       <thead><tr><th>ID</th><th>Источник</th><th>Дата</th><th>Статус</th><th>Записей</th><th>Время (мс)</th><th>Ошибка</th></tr></thead>
-      <tbody id="logs-body"><tr><td colspan="7" class="loading">Загрузка...</td></tr></tbody>
+      <tbody id="logs-body"><tr><td colspan="7" class="loading"><span class="spinner"></span></td></tr></tbody>
     </table>
   </div>
 </div>
@@ -19,29 +40,62 @@
 
 {% block scripts %}
 <script>
+let allLogs = [];
+
 async function loadLogs() {
-  const data = await api('/api/logs?limit=50');
-  document.getElementById('logs-body').innerHTML = data.map(r => `
+  const data = await api('/api/logs?limit=100');
+  if (!data) return;
+  allLogs = data;
+
+  // Статистика
+  document.getElementById('log-total').textContent = data.length;
+  document.getElementById('log-success').textContent = data.filter(r => r.status === 'success').length;
+  document.getElementById('log-records').textContent = data.reduce((s,r) => s + (r.records_added||0), 0).toLocaleString('ru');
+
+  filterLogs();
+}
+
+function filterLogs() {
+  const q = document.getElementById('log-filter').value.toLowerCase();
+  const st = document.getElementById('log-status-filter').value;
+  const filtered = allLogs.filter(r =>
+    (!q || r.source.toLowerCase().includes(q)) &&
+    (!st || r.status === st)
+  );
+  document.getElementById('logs-body').innerHTML = filtered.map(r => `
     <tr>
-      <td>${r.log_id}</td>
+      <td style="color:var(--text2)">${r.log_id}</td>
       <td>${r.source}</td>
       <td>${r.parse_date}</td>
       <td><span class="badge badge-${r.status === 'success' ? 'green' : 'red'}">${r.status}</span></td>
       <td>${r.records_added}</td>
-      <td>${r.execution_time_ms}</td>
-      <td class="error-cell">${r.error_message || '—'}</td>
-    </tr>`).join('');
+      <td>${r.execution_time_ms} <span style="font-size:11px;color:var(--text2)">мс</span></td>
+      <td class="error-cell" title="${r.error_message||''}">${r.error_message || '—'}</td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted" style="text-align:center;padding:16px">Нет записей</td></tr>';
 }
 
 async function runParser() {
+  const btn = document.getElementById('run-btn');
   const el = document.getElementById('run-status');
+  btn.disabled = true;
+  btn.textContent = '⏳ Выполняется...';
   el.style.display = 'block';
   el.className = 'alert alert-info';
-  el.textContent = 'Запуск парсера...';
+  el.textContent = 'Запуск парсера... это может занять до 30 секунд';
+
   const d = await api('/api/parse/run', 'POST');
+  btn.disabled = false;
+  btn.textContent = '▶ Запустить парсер';
+
+  if (!d) { el.className = 'alert alert-error'; el.textContent = 'Ошибка соединения'; return; }
   el.className = 'alert ' + (d.success ? 'alert-success' : 'alert-error');
   el.textContent = d.message;
-  if (d.success) setTimeout(loadLogs, 1000);
+  if (d.success) { toast('Парсер выполнен успешно', 'success'); setTimeout(loadLogs, 800); }
+  else toast(d.message, 'error');
+}
+
+function exportLogs() {
+  exportCSV(allLogs, `parser_logs_${new Date().toISOString().slice(0,10)}.csv`);
 }
 
 loadLogs();

@@ -148,3 +148,77 @@ select:focus, input:focus { outline: none; border-color: var(--accent); }
   .stats-grid { grid-template-columns: 1fr; }
   .converter-row { flex-direction: column; }
 }
+
+/* Toast */
+#toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  padding: 10px 18px; border-radius: 8px; font-size: 13px; font-weight: 500;
+  opacity: 0; transform: translateY(10px); transition: all .25s;
+  max-width: 320px; box-shadow: 0 4px 16px rgba(0,0,0,.4);
+}
+.toast.show { opacity: 1; transform: translateY(0); }
+.toast-info    { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+.toast-success { background: rgba(34,197,94,.2); color: var(--green); border: 1px solid rgba(34,197,94,.3); }
+.toast-error   { background: rgba(239,68,68,.2); color: var(--red);   border: 1px solid rgba(239,68,68,.3); }
+
+/* Spinner */
+.spinner {
+  display: inline-block; width: 14px; height: 14px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin .7s linear infinite; vertical-align: middle;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* RSI шкала */
+.rsi-wrap { display: flex; flex-direction: column; gap: 4px; }
+.rsi-track { height: 6px; background: var(--bg3); border-radius: 3px; overflow: hidden; }
+.rsi-fill  { height: 100%; border-radius: 3px; transition: width .4s; }
+.rsi-high  { background: var(--red); }
+.rsi-low   { background: var(--green); }
+.rsi-mid   { background: var(--accent); }
+.rsi-val   { font-size: 13px; font-weight: 600; }
+.rsi-label { font-size: 11px; font-weight: 400; margin-left: 4px; }
+.rsi-label.rsi-high { color: var(--red); }
+.rsi-label.rsi-low  { color: var(--green); }
+.rsi-label.rsi-mid  { color: var(--text2); }
+
+/* Sparkline в таблице */
+td.spark { padding: 4px 12px; }
+
+/* Trend badge */
+.trend-up   { background: rgba(34,197,94,.15);  color: var(--green); }
+.trend-down { background: rgba(239,68,68,.15);  color: var(--red); }
+.trend-stable { background: rgba(79,142,247,.15); color: var(--accent); }
+
+/* Tabs */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 16px; }
+.tab-btn {
+  padding: 8px 16px; border: none; background: none; color: var(--text2);
+  cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+
+/* Sortable table */
+th.sortable { cursor: pointer; user-select: none; }
+th.sortable:hover { color: var(--text); }
+th.sort-asc::after  { content: ' ↑'; color: var(--accent); }
+th.sort-desc::after { content: ' ↓'; color: var(--accent); }
+
+/* Pagination */
+.pagination { display: flex; gap: 6px; align-items: center; justify-content: center; margin-top: 12px; }
+.page-btn {
+  padding: 4px 10px; border-radius: 5px; border: 1px solid var(--border);
+  background: var(--bg3); color: var(--text2); cursor: pointer; font-size: 12px;
+}
+.page-btn:hover, .page-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
+.page-info { font-size: 12px; color: var(--text2); }
+
+/* Chart period buttons */
+.period-btns { display: flex; gap: 4px; }
+.period-btn {
+  padding: 3px 10px; border-radius: 5px; border: 1px solid var(--border);
+  background: none; color: var(--text2); cursor: pointer; font-size: 12px;
+}
+.period-btn.active { background: var(--accent); color: #fff; border-color: var(--accent); }
