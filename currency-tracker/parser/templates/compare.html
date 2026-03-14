@@ -1,0 +1,172 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Сравнение источников</h1>
+  <div style="display:flex;gap:8px;align-items:center">
+    <button class="btn btn-sm" onclick="runMoex()">↻ Обновить MOEX</button>
+  </div>
+</div>
+
+<div class="card mb">
+  <div class="card-header">
+    <h2>ЦБ РФ vs MOEX</h2>
+    <div style="display:flex;gap:8px;align-items:center">
+      <select id="cmp-pair" onchange="loadCompare()">
+        <option value="USD-RUB">USD/RUB</option>
+        <option value="EUR-RUB">EUR/RUB</option>
+        <option value="CNY-RUB">CNY/RUB</option>
+        <option value="GBP-RUB">GBP/RUB</option>
+        <option value="CHF-RUB">CHF/RUB</option>
+      </select>
+      <div class="period-btns">
+        <button class="period-btn active" onclick="setCmpDays(7,this)">7д</button>
+        <button class="period-btn" onclick="setCmpDays(30,this)">30д</button>
+        <button class="period-btn" onclick="setCmpDays(90,this)">90д</button>
+      </div>
+    </div>
+  </div>
+  <canvas id="cmpChart" height="160"></canvas>
+</div>
+
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header"><h2>Текущие курсы MOEX</h2></div>
+    <div id="moex-table"><span class="spinner"></span></div>
+  </div>
+  <div class="card">
+    <div class="card-header">
+      <h2>Спред ЦБ vs MOEX</h2>
+      <span class="muted" style="font-size:12px">на последнюю дату</span>
+    </div>
+    <div id="spread-table"><span class="spinner"></span></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let cmpChart = null, cmpDays = 7;
+
+async function loadCompare() {
+  const pair = document.getElementById('cmp-pair').value;
+  const data = await api(`/api/rates/compare/${pair}?days=${cmpDays}`);
+  if (!data) return;
+
+  const sources = Object.keys(data);
+  if (!sources.length) {
+    document.getElementById('cmpChart').parentElement.innerHTML +=
+      '<p class="muted" style="text-align:center;padding:20px">Нет данных для сравнения. Запустите MOEX парсер.</p>';
+    return;
+  }
+
+  const colors = ['#4f8ef7','#22c55e','#f59e0b','#a855f7'];
+  const datasets = sources.map((src, i) => ({
+    label: src.replace('Central Bank of Russia','ЦБ РФ')
+              .replace('Moscow Exchange (MOEX)','MOEX')
+              .replace('European Central Bank','ЕЦБ'),
+    data: data[src].map(d => ({ x: d.date, y: d.rate })),
+    borderColor: colors[i % colors.length],
+    backgroundColor: 'transparent',
+    borderWidth: 2, pointRadius: 2, tension: 0.3
+  }));
+
+  if (cmpChart) cmpChart.destroy();
+  cmpChart = new Chart(document.getElementById('cmpChart'), {
+    type: 'line',
+    data: { datasets },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { labels: { color: '#8892a4', boxWidth: 12 } } },
+      scales: {
+        x: { type: 'category', ticks: { maxTicksLimit: 10, color: '#8892a4' }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+
+  // Спред
+  renderSpread(data);
+}
+
+function renderSpread(data) {
+  const cbr = data['Central Bank of Russia'] || [];
+  const moex = data['Moscow Exchange (MOEX)'] || [];
+  if (!cbr.length || !moex.length) {
+    document.getElementById('spread-table').innerHTML =
+      '<p class="muted" style="padding:12px">Нет данных MOEX для сравнения</p>';
+    return;
+  }
+  // Последние значения
+  const cbrLast = cbr[cbr.length - 1];
+  const moexLast = moex[moex.length - 1];
+  const diff = moexLast.rate - cbrLast.rate;
+  const pct = (diff / cbrLast.rate * 100).toFixed(3);
+  const cls = diff > 0 ? 'up' : 'down';
+  document.getElementById('spread-table').innerHTML = `
+    <table>
+      <thead><tr><th>Источник</th><th>Курс</th><th>Дата</th></tr></thead>
+      <tbody>
+        <tr><td>ЦБ РФ</td><td>${cbrLast.rate.toFixed(4)}</td><td>${cbrLast.date}</td></tr>
+        <tr><td>MOEX</td><td>${moexLast.rate.toFixed(4)}</td><td>${moexLast.date}</td></tr>
+        <tr>
+          <td><b>Разница</b></td>
+          <td class="${cls}"><b>${diff > 0 ? '+' : ''}${diff.toFixed(4)} (${pct}%)</b></td>
+          <td></td>
+        </tr>
+      </tbody>
+    </table>
+    <p class="muted" style="font-size:11px;margin-top:10px;padding:0 4px">
+      ЦБ РФ публикует официальный курс, MOEX — реальные биржевые торги.
+      Расхождение до 1% — норма.
+    </p>`;
+}
+
+async function loadMoex() {
+  const data = await api('/api/moex/latest');
+  if (!data) {
+    document.getElementById('moex-table').innerHTML =
+      '<p class="muted" style="padding:12px">Нет данных. Нажмите "Обновить MOEX".</p>';
+    return;
+  }
+  if (!data.length) {
+    document.getElementById('moex-table').innerHTML =
+      '<p class="muted" style="padding:12px">Нет данных. Нажмите "Обновить MOEX".</p>';
+    return;
+  }
+  document.getElementById('moex-table').innerHTML = `
+    <table>
+      <thead><tr><th>Пара</th><th>Курс</th><th>Дата</th></tr></thead>
+      <tbody>${data.map(r => `
+        <tr>
+          <td><b>${r.base_currency}/${r.target_currency}</b></td>
+          <td>${parseFloat(r.rate).toFixed(4)}</td>
+          <td>${r.rate_date}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+async function runMoex() {
+  showToast('Запуск MOEX парсера...', 'info');
+  const r = await api('/api/parse/moex', 'POST');
+  if (r) {
+    showToast(r.message, r.success ? 'success' : 'error');
+    if (r.success) { loadMoex(); loadCompare(); }
+  }
+}
+
+function setCmpDays(d, btn) {
+  cmpDays = d;
+  document.querySelectorAll('.period-btns .period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCompare();
+}
+
+loadMoex();
+loadCompare();
+</script>
+<style>
+.mb { margin-bottom: 16px; }
+</style>
+{% endblock %}

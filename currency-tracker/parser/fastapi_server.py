@@ -144,6 +144,14 @@ def page_analysis(request: Request):
 def page_logs(request: Request):
     return templates.TemplateResponse("logs.html", {"request": request})
 
+@app.get("/compare", include_in_schema=False)
+def page_compare(request: Request):
+    return templates.TemplateResponse("compare.html", {"request": request})
+
+@app.get("/crypto", include_in_schema=False)
+def page_crypto(request: Request):
+    return templates.TemplateResponse("crypto.html", {"request": request})
+
 
 # --- API ---
 
@@ -332,6 +340,132 @@ def run_parser():
         }
     except subprocess.TimeoutExpired:
         return {"success": False, "message": "Таймаут — парсер работал дольше 120 сек"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.get("/api/rates/compare/{pair}", tags=["Compare"])
+def compare_sources(pair: str, days: int = Query(default=30, ge=1, le=365)):
+    """Сравнение курса одной пары по разным источникам"""
+    base, target = _pair(pair)
+    db = _db()
+    rows = db.fetchall_dict(
+        """SELECT er.rate_date, er.rate, ds.name AS source
+           FROM exchange_rates er
+           JOIN data_sources ds USING (source_id)
+           WHERE er.base_currency = %s AND er.target_currency = %s
+             AND er.rate_date >= CURRENT_DATE - (%s||' days')::INTERVAL
+           ORDER BY er.rate_date, ds.name""",
+        (base, target, days)
+    )
+    db.disconnect()
+    # Группируем по источнику
+    result = {}
+    for r in rows:
+        src = r["source"]
+        if src not in result:
+            result[src] = []
+        result[src].append({"date": str(r["rate_date"]), "rate": float(r["rate"])})
+    return result
+
+
+@app.get("/api/crypto/latest", tags=["Crypto"])
+def get_crypto_latest():
+    """Последние курсы криптовалют"""
+    db = _db()
+    rows = db.fetchall_dict(
+        """SELECT er.base_currency, er.target_currency,
+                  er.rate, er.rate_date, ds.name AS source
+           FROM exchange_rates er
+           JOIN data_sources ds USING (source_id)
+           WHERE ds.name ILIKE '%coingecko%'
+             AND er.rate_date = (
+               SELECT MAX(rate_date) FROM exchange_rates er2
+               JOIN data_sources ds2 USING (source_id)
+               WHERE ds2.name ILIKE '%coingecko%'
+             )
+           ORDER BY er.base_currency, er.target_currency"""
+    )
+    db.disconnect()
+    for r in rows:
+        r["rate_date"] = str(r["rate_date"])
+    return rows
+
+
+@app.get("/api/moex/latest", tags=["MOEX"])
+def get_moex_latest():
+    """Последние биржевые курсы MOEX"""
+    db = _db()
+    rows = db.fetchall_dict(
+        """SELECT er.base_currency, er.target_currency,
+                  er.rate, er.rate_date, ds.name AS source
+           FROM exchange_rates er
+           JOIN data_sources ds USING (source_id)
+           WHERE ds.name ILIKE '%moex%'
+             AND er.rate_date = (
+               SELECT MAX(rate_date) FROM exchange_rates er2
+               JOIN data_sources ds2 USING (source_id)
+               WHERE ds2.name ILIKE '%moex%'
+             )
+           ORDER BY er.base_currency"""
+    )
+    db.disconnect()
+    for r in rows:
+        r["rate_date"] = str(r["rate_date"])
+    return rows
+
+
+@app.post("/api/parse/moex", tags=["Logs"])
+def run_moex_parser():
+    """Запустить MOEX парсер вручную"""
+    try:
+        from parsers import MOEXParser
+        db = _db()
+        from main import _ensure_source
+        source_id = _ensure_source(db, "Moscow Exchange (MOEX)",
+                                   "https://iss.moex.com/iss")
+        parser = MOEXParser()
+        data = parser.fetch()
+        rates = parser.parse(data)
+        rates_data = [
+            (r["base_currency"], r["target_currency"], r["rate"], r["rate_date"], source_id)
+            for r in rates if db.get_currency_code(r["base_currency"])
+        ]
+        n = db.insert_rates(rates_data)
+        db.disconnect()
+        return {"success": True, "records": n, "message": f"MOEX: сохранено {n} курсов"}
+    except Exception as e:
+        return {"success": False, "message": str(e)}
+
+
+@app.post("/api/parse/crypto", tags=["Logs"])
+def run_crypto_parser():
+    """Запустить крипто парсер вручную"""
+    try:
+        from parsers import CryptoParser
+        from main import _ensure_source, _ensure_currency
+        db = _db()
+        source_id = _ensure_source(db, "CoinGecko (Crypto)",
+                                   "https://api.coingecko.com/api/v3")
+        crypto_names = {
+            "BTC": ("Bitcoin", "₿"), "ETH": ("Ethereum", "Ξ"),
+            "USDT": ("Tether", "₮"), "BNB": ("BNB", ""),
+            "SOL": ("Solana", ""), "XRP": ("XRP", ""), "TON": ("Toncoin", ""),
+        }
+        for code, (name, symbol) in crypto_names.items():
+            _ensure_currency(db, code, name, symbol)
+
+        parser = CryptoParser()
+        data = parser.fetch()
+        rates = parser.parse(data)
+        rates_data = [
+            (r["base_currency"], r["target_currency"], r["rate"], r["rate_date"], source_id)
+            for r in rates if db.get_currency_code(r["base_currency"])
+            and db.get_currency_code(r["target_currency"])
+        ]
+        n = db.insert_rates(rates_data)
+        db.disconnect()
+        return {"success": True, "records": n, "message": f"Crypto: сохранено {n} курсов"}
     except Exception as e:
         return {"success": False, "message": str(e)}
 

@@ -1,0 +1,170 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Криптовалюты</h1>
+  <button class="btn btn-primary" onclick="runCrypto()">↻ Обновить</button>
+</div>
+
+<div class="stats-grid" id="crypto-stats">
+  <div class="stat-card"><div class="stat-label">BTC/USD</div><div class="stat-value" id="s-btc">—</div></div>
+  <div class="stat-card"><div class="stat-label">ETH/USD</div><div class="stat-value" id="s-eth">—</div></div>
+  <div class="stat-card"><div class="stat-label">BTC/RUB</div><div class="stat-value" id="s-btcrub">—</div></div>
+  <div class="stat-card"><div class="stat-label">USDT/RUB</div><div class="stat-value" id="s-usdt">—</div></div>
+</div>
+
+<div class="grid-2 mt">
+  <div class="card">
+    <div class="card-header">
+      <h2>Все курсы</h2>
+      <select id="vs-filter" onchange="filterCrypto()">
+        <option value="">Все валюты</option>
+        <option value="USD">vs USD</option>
+        <option value="RUB">vs RUB</option>
+        <option value="EUR">vs EUR</option>
+      </select>
+    </div>
+    <div id="crypto-table"><span class="spinner"></span></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <h2>График</h2>
+      <div style="display:flex;gap:8px">
+        <select id="crypto-pair" onchange="loadCryptoChart()">
+          <option value="BTC-USD">BTC/USD</option>
+          <option value="ETH-USD">ETH/USD</option>
+          <option value="BTC-RUB">BTC/RUB</option>
+          <option value="SOL-USD">SOL/USD</option>
+          <option value="XRP-USD">XRP/USD</option>
+        </select>
+        <div class="period-btns">
+          <button class="period-btn active" onclick="setCryptoDays(7,this)">7д</button>
+          <button class="period-btn" onclick="setCryptoDays(30,this)">30д</button>
+        </div>
+      </div>
+    </div>
+    <canvas id="cryptoChart" height="220"></canvas>
+  </div>
+</div>
+
+<div class="card mt">
+  <div class="card-header">
+    <h2>О данных</h2>
+  </div>
+  <p style="color:var(--text2);font-size:13px;line-height:1.6">
+    Данные предоставляются через <b style="color:var(--text)">CoinGecko API</b> (бесплатный, без ключа).
+    Курсы обновляются при каждом запуске парсера или вручную кнопкой "Обновить".
+    Доступные пары: BTC, ETH, USDT, BNB, SOL, XRP, TON против USD, RUB, EUR.
+  </p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let allCrypto = [], cryptoChart = null, cryptoDays = 7;
+
+async function loadCrypto() {
+  const data = await api('/api/crypto/latest');
+  if (!data) return;
+  allCrypto = data;
+
+  // Заполняем статы
+  const find = (base, target) => data.find(r => r.base_currency === base && r.target_currency === target);
+  const btcusd = find('BTC','USD');
+  const ethusd = find('ETH','USD');
+  const btcrub = find('BTC','RUB');
+  const usdtrub = find('USDT','RUB');
+
+  if (btcusd) document.getElementById('s-btc').textContent = '$' + Number(btcusd.rate).toLocaleString('ru');
+  if (ethusd) document.getElementById('s-eth').textContent = '$' + Number(ethusd.rate).toLocaleString('ru');
+  if (btcrub) document.getElementById('s-btcrub').textContent = '₽' + Number(btcrub.rate).toLocaleString('ru');
+  if (usdtrub) document.getElementById('s-usdt').textContent = '₽' + Number(usdtrub.rate).toFixed(2);
+
+  filterCrypto();
+}
+
+function filterCrypto() {
+  const vs = document.getElementById('vs-filter').value;
+  const filtered = vs ? allCrypto.filter(r => r.target_currency === vs) : allCrypto;
+
+  if (!filtered.length) {
+    document.getElementById('crypto-table').innerHTML =
+      '<p class="muted" style="padding:12px">Нет данных. Нажмите "Обновить".</p>';
+    return;
+  }
+
+  document.getElementById('crypto-table').innerHTML = `
+    <table>
+      <thead><tr><th>Монета</th><th>Котировка</th><th>Курс</th><th>Дата</th></tr></thead>
+      <tbody>${filtered.map(r => `
+        <tr>
+          <td><b>${r.base_currency}</b></td>
+          <td>${r.target_currency}</td>
+          <td>${formatCryptoRate(r.base_currency, r.target_currency, r.rate)}</td>
+          <td>${r.rate_date}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+
+function formatCryptoRate(base, target, rate) {
+  const sym = target === 'USD' ? '$' : target === 'RUB' ? '₽' : target === 'EUR' ? '€' : '';
+  const val = parseFloat(rate);
+  if (val > 1000) return sym + val.toLocaleString('ru', {maximumFractionDigits: 0});
+  if (val > 1) return sym + val.toFixed(2);
+  return sym + val.toFixed(6);
+}
+
+async function loadCryptoChart() {
+  const pair = document.getElementById('crypto-pair').value;
+  const data = await api(`/api/rates/${pair}?days=${cryptoDays}`);
+  if (!data || !data.length) {
+    if (cryptoChart) cryptoChart.destroy();
+    return;
+  }
+
+  if (cryptoChart) cryptoChart.destroy();
+  cryptoChart = new Chart(document.getElementById('cryptoChart'), {
+    type: 'line',
+    data: {
+      labels: data.map(d => d.date),
+      datasets: [{
+        label: pair.replace('-','/'),
+        data: data.map(d => d.rate),
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.07)',
+        borderWidth: 2, pointRadius: 2, tension: 0.3, fill: true
+      }]
+    },
+    options: {
+      responsive: true,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { maxTicksLimit: 8, color: '#8892a4' }, grid: { color: '#2e3250' } },
+        y: { ticks: { color: '#8892a4' }, grid: { color: '#2e3250' } }
+      }
+    }
+  });
+}
+
+async function runCrypto() {
+  showToast('Загрузка крипто данных...', 'info');
+  const r = await api('/api/parse/crypto', 'POST');
+  if (r) {
+    showToast(r.message, r.success ? 'success' : 'error');
+    if (r.success) { loadCrypto(); loadCryptoChart(); }
+  }
+}
+
+function setCryptoDays(d, btn) {
+  cryptoDays = d;
+  document.querySelectorAll('.period-btns .period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  loadCryptoChart();
+}
+
+loadCrypto();
+loadCryptoChart();
+</script>
+{% endblock %}

@@ -97,3 +97,6 @@ document.addEventListener('DOMContentLoaded', () => {
     if (a.getAttribute('href') === path) a.classList.add('active');
   });
 });
+
+// Алиас для совместимости
+const showToast = toast;
