@@ -5,7 +5,9 @@ FastAPI сервер для Currency Tracker
 Документация:  http://localhost:8000/docs
 """
 
-import os, sys, subprocess
+import os, sys, subprocess, threading, time, logging
+from datetime import datetime
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -16,11 +18,59 @@ from analyzer import CurrencyAnalyzer
 from database import Database
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+logger = logging.getLogger("scheduler")
+
+# --- Фоновый планировщик ---
+
+def _scheduler_loop():
+    """Запускает парсер каждый день в 9:00 и проверяет алерты каждый час"""
+    from main import main as parse_main
+    last_parse_day = None
+    last_alert_hour = None
+
+    logger.info("Планировщик запущен")
+    while True:
+        now = datetime.now()
+
+        # Парсинг раз в день в 9:00
+        if now.hour == 9 and now.date() != last_parse_day:
+            logger.info("Автопарсинг: запуск...")
+            try:
+                parse_main()
+                last_parse_day = now.date()
+                logger.info("Автопарсинг: завершён")
+            except Exception as e:
+                logger.error(f"Автопарсинг: ошибка — {e}")
+
+        # Проверка алертов раз в час
+        if now.hour != last_alert_hour:
+            try:
+                from analyzer import CurrencyAnalyzer
+                a = CurrencyAnalyzer()
+                alerts = a.check_alerts()
+                a.close()
+                if alerts:
+                    logger.info(f"Алерты: сработало {len(alerts)}")
+                last_alert_hour = now.hour
+            except Exception as e:
+                logger.error(f"Алерты: ошибка — {e}")
+
+        time.sleep(60)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Запускаем планировщик в фоновом потоке
+    t = threading.Thread(target=_scheduler_loop, daemon=True, name="scheduler")
+    t.start()
+    logger.info("Фоновый планировщик запущен")
+    yield
+    logger.info("Сервер остановлен")
 
 app = FastAPI(
     title="Currency Tracker API",
     description="API для получения и анализа курсов валют",
-    version="2.0.0"
+    version="2.0.0",
+    lifespan=lifespan
 )
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -100,6 +150,22 @@ def page_logs(request: Request):
 @app.get("/api", tags=["Info"])
 def api_root():
     return {"name": "Currency Tracker API", "version": "2.0.0", "docs": "/docs", "ui": "/"}
+
+
+@app.get("/api/scheduler/status", tags=["Info"])
+def scheduler_status():
+    """Статус планировщика и время следующего парсинга"""
+    now = datetime.now()
+    next_parse = now.replace(hour=9, minute=0, second=0, microsecond=0)
+    if now.hour >= 9:
+        from datetime import timedelta
+        next_parse += timedelta(days=1)
+    return {
+        "scheduler": "running",
+        "next_parse": next_parse.strftime("%Y-%m-%d %H:%M"),
+        "next_alert_check": now.replace(minute=0, second=0).strftime("%Y-%m-%d %H:%M"),
+        "server_time": now.strftime("%Y-%m-%d %H:%M:%S")
+    }
 
 
 @app.get("/api/status", tags=["Info"])

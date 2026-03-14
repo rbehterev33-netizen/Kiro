@@ -20,6 +20,8 @@
     <div class="nav-status">
       <span id="db-status" class="status-dot"></span>
       <span id="db-info">...</span>
+      <span style="color:var(--border)">|</span>
+      <span id="scheduler-info" style="font-size:11px;color:var(--text2)">планировщик...</span>
     </div>
   </nav>
 
@@ -28,6 +30,17 @@
   </main>
 
   <script src="/static/app.js"></script>
+  <script>
+    // Статус планировщика в navbar — обновляется каждые 30 сек
+    async function loadSchedulerStatus() {
+      const d = await api('/api/scheduler/status');
+      if (!d) return;
+      document.getElementById('scheduler-info').textContent =
+        `следующий парсинг: ${d.next_parse}`;
+    }
+    loadSchedulerStatus();
+    setInterval(loadSchedulerStatus, 30000);
+  </script>
   {% block scripts %}{% endblock %}
 </body>
 </html>
